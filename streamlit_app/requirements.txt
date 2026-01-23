@@ -1,4 +1,0 @@
-streamlit
-requests
-SpeechRecognition
-streamlit-mic-recorder
