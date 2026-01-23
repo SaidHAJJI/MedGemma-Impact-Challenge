@@ -1,7 +1,9 @@
 import streamlit as st
 import requests
 import json
+import io
 import speech_recognition as sr
+from streamlit_mic_recorder import mic_recorder
 from datetime import datetime
 
 # --- Configuration ---
@@ -32,31 +34,17 @@ def query_ollama(prompt):
         response.raise_for_status()
         return response.json()['response']
     except requests.exceptions.RequestException as e:
-        return f"Error connecting to Ollama: {e}. Make sure Ollama is running (`ollama serve`)."
+        return f"Error connecting to Ollama: {e}. Make sure Ollama is running locally and accessible via ngrok or local tunnel if using Streamlit Cloud."
 
-def listen_to_mic():
-    """Écoute le microphone et retourne le texte transcrit."""
+def transcribe_audio(audio_bytes):
+    """Transcrit les octets audio reçus du navigateur."""
     recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.info("🎙️ Écoute en cours... Parlez maintenant !")
+    audio_file = io.BytesIO(audio_bytes)
+    with sr.AudioFile(audio_file) as source:
+        audio_data = recognizer.record(source)
         try:
-            # Calibrage du bruit ambiant
-            recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            # Écoute (timeout de 5s pour le silence initial)
-            audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
-            st.success("Traitement audio...")
-            # Transcription (utilise Google Web Speech API par défaut - nécessite internet)
-            # Pour du 100% offline, il faudrait utiliser Vosk ou Whisper local.
-            text = recognizer.recognize_google(audio, language="fr-FR")
-            return text
-        except sr.WaitTimeoutError:
-            st.warning("Aucune parole détectée.")
-            return None
-        except sr.UnknownValueError:
-            st.warning("Je n'ai pas compris l'audio.")
-            return None
-        except sr.RequestError as e:
-            st.error(f"Erreur du service de reconnaissance : {e}")
+            return recognizer.recognize_google(audio_data, language="fr-FR")
+        except:
             return None
 
 # --- Interface Streamlit ---
@@ -76,49 +64,48 @@ with st.sidebar:
     st.header("ℹ️ À propos")
     st.info(
         """
-        Cette application utilise **Google Gemma (2B)** via Ollama pour analyser les symptômes.
-        
-        🔒 **Privacy-First** : 
-        Aucune donnée ne quitte votre ordinateur. Tout le traitement est local.
+        Cette application utilise **Google Gemma (2B)** via Ollama.
         """
     )
     st.warning(
         """
         **DISCLAIMER MÉDICAL**
-        Ceci est une démonstration technique. 
         Ne pas utiliser pour de vraies urgences médicales. 
-        En cas d'urgence, appelez le 15 ou le 112.
         """
     )
     
     st.write(f"Modèle actif : `{MODEL_NAME}`")
 
-# Init Session State for Symptoms
+# Init Session State
 if 'symptoms_input' not in st.session_state:
     st.session_state.symptoms_input = ""
 
 # Main Input
 st.subheader("Description des symptômes")
 
-# Voice Input Button
-col_mic, col_spacer = st.columns([1, 5])
-with col_mic:
-    if st.button("🎤 Parler"):
-        transcribed_text = listen_to_mic()
-        if transcribed_text:
-            st.session_state.symptoms_input = transcribed_text
-            st.rerun()
-
-symptoms = st.text_area(
-    "Décrivez ce que vous ressentez (ex: 'Douleur poitrine bras gauche', 'Fièvre 39C enfant')...",
-    value=st.session_state.symptoms_input,
-    height=150,
-    placeholder="Ex: J'ai mal à la tête et la lumière me gêne..."
+# Voice Input (Browser-based)
+st.write("🎤 Enregistrez vos symptômes :")
+audio = mic_recorder(
+    start_prompt="Démarrer l'enregistrement",
+    stop_prompt="Arrêter",
+    key='recorder'
 )
 
-# Update session state if user types manually
-if symptoms != st.session_state.symptoms_input:
-    st.session_state.symptoms_input = symptoms
+if audio:
+    transcribed = transcribe_audio(audio['bytes'])
+    if transcribed:
+        st.session_state.symptoms_input = transcribed
+
+symptoms = st.text_area(
+    "Décrivez ce que vous ressentez...",
+    value=st.session_state.symptoms_input,
+    height=150,
+    key="text_input_area"
+)
+
+# Note pour l'utilisateur Cloud
+if "localhost" in OLLAMA_URL:
+    st.warning("⚠️ L'application cloud tente de contacter `localhost`. Pour que cela fonctionne, vous devez exposer votre Ollama local (ex: via `ngrok`) ou héberger le modèle dans le cloud.")
 
 col1, col2 = st.columns([1, 4])
 with col1:
