@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import speech_recognition as sr
 from datetime import datetime
 
 # --- Configuration ---
@@ -32,6 +33,31 @@ def query_ollama(prompt):
         return response.json()['response']
     except requests.exceptions.RequestException as e:
         return f"Error connecting to Ollama: {e}. Make sure Ollama is running (`ollama serve`)."
+
+def listen_to_mic():
+    """Écoute le microphone et retourne le texte transcrit."""
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.info("🎙️ Écoute en cours... Parlez maintenant !")
+        try:
+            # Calibrage du bruit ambiant
+            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+            # Écoute (timeout de 5s pour le silence initial)
+            audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+            st.success("Traitement audio...")
+            # Transcription (utilise Google Web Speech API par défaut - nécessite internet)
+            # Pour du 100% offline, il faudrait utiliser Vosk ou Whisper local.
+            text = recognizer.recognize_google(audio, language="fr-FR")
+            return text
+        except sr.WaitTimeoutError:
+            st.warning("Aucune parole détectée.")
+            return None
+        except sr.UnknownValueError:
+            st.warning("Je n'ai pas compris l'audio.")
+            return None
+        except sr.RequestError as e:
+            st.error(f"Erreur du service de reconnaissance : {e}")
+            return None
 
 # --- Interface Streamlit ---
 st.set_page_config(
@@ -67,13 +93,32 @@ with st.sidebar:
     
     st.write(f"Modèle actif : `{MODEL_NAME}`")
 
+# Init Session State for Symptoms
+if 'symptoms_input' not in st.session_state:
+    st.session_state.symptoms_input = ""
+
 # Main Input
 st.subheader("Description des symptômes")
+
+# Voice Input Button
+col_mic, col_spacer = st.columns([1, 5])
+with col_mic:
+    if st.button("🎤 Parler"):
+        transcribed_text = listen_to_mic()
+        if transcribed_text:
+            st.session_state.symptoms_input = transcribed_text
+            st.rerun()
+
 symptoms = st.text_area(
     "Décrivez ce que vous ressentez (ex: 'Douleur poitrine bras gauche', 'Fièvre 39C enfant')...",
+    value=st.session_state.symptoms_input,
     height=150,
     placeholder="Ex: J'ai mal à la tête et la lumière me gêne..."
 )
+
+# Update session state if user types manually
+if symptoms != st.session_state.symptoms_input:
+    st.session_state.symptoms_input = symptoms
 
 col1, col2 = st.columns([1, 4])
 with col1:
