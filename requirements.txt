@@ -2,4 +2,4 @@ streamlit>=1.31.0
 requests
 speechrecognition>=3.10.0
 streamlit-mic-recorder
-google-generativeai
+google-genai

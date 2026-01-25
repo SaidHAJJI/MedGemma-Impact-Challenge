@@ -3,15 +3,15 @@ import io
 import speech_recognition as sr
 from streamlit_mic_recorder import mic_recorder
 from datetime import datetime
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import os
 
 # --- Configuration ---
-# On utilise Gemini 1.5 Flash pour sa vitesse et son faible coût, idéal pour du triage
-MODEL_NAME = "gemini-1.5-flash"
+# Utilisation du modèle Gemini 2.0 Flash (Dernière version)
+MODEL_NAME = "gemini-2.0-flash"
 
 # --- System Prompt (V3 - SafetyFirst) ---
-# Mise à jour vers la version V3 qui est plus robuste pour la sécurité
 SYSTEM_PROMPT = """You are MedGemma, a helpful medical triage assistant.
 CRITICAL: If symptoms suggest a life-threatening emergency (heart attack, stroke, severe bleeding, difficulty breathing), IMMEDIATELY tell the user to call emergency services (911/112).
 For non-emergencies:
@@ -21,43 +21,40 @@ For non-emergencies:
 4. Always advise seeing a doctor.
 Keep responses concise, structured, and empathetic."""
 
-def configure_genai():
-    """Configure l'API Google Generative AI via st.secrets ou variables d'env."""
-    api_key = None
-    
-    # 1. Vérifier dans les secrets Streamlit (.streamlit/secrets.toml)
+def get_api_key():
+    """Récupère la clé API depuis les secrets ou l'environnement."""
     if "GEMINI_API_KEY" in st.secrets:
-        api_key = st.secrets["GEMINI_API_KEY"]
-    
-    # 2. Vérifier dans les variables d'environnement (backup)
-    if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        return False
-    
-    genai.configure(api_key=api_key)
-    return True
+        return st.secrets["GEMINI_API_KEY"]
+    return os.getenv("GEMINI_API_KEY")
 
 def query_gemini(prompt):
-    """Envoie la requête à l'API Gemini."""
+    """Envoie la requête à l'API Gemini via le nouveau SDK google-genai."""
+    api_key = get_api_key()
+    if not api_key:
+        return "Erreur : Clé API manquante. Veuillez configurer .streamlit/secrets.toml."
+
     try:
-        model = genai.GenerativeModel(
-            model_name=MODEL_NAME,
-            system_instruction=SYSTEM_PROMPT
-        )
+        # Initialisation du client avec la nouvelle librairie
+        client = genai.Client(api_key=api_key)
         
-        # Configuration de la génération pour être concis
-        generation_config = genai.types.GenerationConfig(
-            candidate_count=1,
+        # Configuration de la génération
+        config = types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.4,
             max_output_tokens=500,
-            temperature=0.4, # Assez bas pour rester factuel
+            candidate_count=1
         )
 
-        response = model.generate_content(prompt, generation_config=generation_config)
+        # Appel au modèle
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=config
+        )
         return response.text
+        
     except Exception as e:
-        return f"Erreur lors de l'appel à Gemini API: {str(e)}"
+        return f"Erreur lors de l'appel à Gemini API : {str(e)}"
 
 def transcribe_audio(audio_bytes):
     """Transcrit les octets audio reçus du navigateur."""
@@ -77,39 +74,37 @@ st.set_page_config(
     layout="centered"
 )
 
-# Configuration de l'API au démarrage
-api_ready = configure_genai()
+# Vérification de la clé au démarrage
+api_key_present = get_api_key() is not None
 
 # Header
 st.title("🏥 MedGemma Triage Assistant")
-st.markdown("**Prototype Hackathon - Version Cloud (Gemini API)**")
+st.markdown(f"**Prototype Hackathon - Version Cloud ({MODEL_NAME})**")
 st.markdown("---")
 
 # Sidebar - Context & Privacy
 with st.sidebar:
     st.header("ℹ️ À propos")
     
-    if api_ready:
-        st.success("✅ API Connectée")
+    if api_key_present:
+        st.success("✅ Clé API détectée")
     else:
-        st.error("❌ API Key manquante")
+        st.error("❌ Clé API manquante")
         st.markdown("""
-        Créez un fichier `.streamlit/secrets.toml` :
-        ```toml
-        GEMINI_API_KEY = "votre_cle_ici"
-        ```
+        Vérifiez `secrets.toml`.
         """)
 
     st.info(
         f"""
-        Modèle actif : **{MODEL_NAME}**
-        System Prompt : **V3 SafetyFirst**
+        Lib : `google-genai` (New SDK)
+        Modèle : `{MODEL_NAME}`
+        Prompt : `V3 SafetyFirst`
         """
     )
     st.warning(
         """
         **DISCLAIMER MÉDICAL**
-        Ceci est un prototype de démonstration.
+        Ceci est un prototype.
         Ne pas utiliser pour de vraies urgences. 
         """
     )
@@ -143,7 +138,7 @@ symptoms = st.text_area(
 
 col1, col2 = st.columns([1, 4])
 with col1:
-    analyze_btn = st.button("🔍 Analyser", type="primary", disabled=not api_ready)
+    analyze_btn = st.button("🔍 Analyser", type="primary", disabled=not api_key_present)
 
 # Analysis Logic
 if analyze_btn:
@@ -157,15 +152,16 @@ if analyze_btn:
             duration = (end_time - start_time).total_seconds()
             
         # Display Results
-        st.success(f"Analyse terminée en {duration:.2f} secondes.")
-        
-        st.markdown("### 📋 Rapport de Triage")
-        container = st.container(border=True)
-        container.markdown(response)
-        
-        st.caption("Généré par Gemini 1.5 Flash. Vérifiez toujours avec un professionnel.")
+        if "Erreur" in response:
+             st.error(response)
+        else:
+            st.success(f"Analyse terminée en {duration:.2f} secondes.")
+            st.markdown("### 📋 Rapport de Triage")
+            container = st.container(border=True)
+            container.markdown(response)
+            st.caption("Généré par Gemini. Vérifiez toujours avec un professionnel.")
 
 # Footer
 st.markdown("---")
-if not api_ready:
-    st.warning("Veuillez configurer votre clé API pour utiliser l'application.")
+if not api_key_present:
+    st.warning("Configuration requise : Ajoutez votre clé API dans .streamlit/secrets.toml")
