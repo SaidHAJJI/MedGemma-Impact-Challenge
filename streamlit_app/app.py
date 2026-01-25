@@ -8,8 +8,8 @@ from google.genai import types
 import os
 
 # --- Configuration ---
-# Utilisation du modèle Gemini 1.5 Flash (Plus stable pour le Free Tier)
-MODEL_NAME = "gemini-1.5-flash"
+# Utilisation du modèle Gemini 2.0 Flash
+MODEL_NAME = "gemini-2.0-flash"
 
 # --- System Prompt (V3 - SafetyFirst) ---
 SYSTEM_PROMPT = """You are MedGemma, a helpful medical triage assistant.
