@@ -136,11 +136,31 @@ PREDEFINED_SYMPTOMS = [
     "Perte de goût/odorat", "Douleur thoracique", "Vertiges", "Éruption cutanée"
 ]
 
-selected_symptoms = st.multiselect(
-    "Symptômes courants (optionnel) :",
-    PREDEFINED_SYMPTOMS,
-    help="Sélectionnez un ou plusieurs symptômes dans la liste."
-)
+if 'selected_symptoms' not in st.session_state:
+    st.session_state.selected_symptoms = set()
+
+st.write("Symptômes courants (cliquez pour sélectionner) :")
+
+# Create a grid of tiles (4 columns)
+cols = st.columns(4)
+for i, symptom in enumerate(PREDEFINED_SYMPTOMS):
+    col = cols[i % 4]
+    is_selected = symptom in st.session_state.selected_symptoms
+    
+    # Toggle logic
+    if col.button(
+        f"{'✅ ' if is_selected else ''}{symptom}",
+        key=f"btn_{symptom}",
+        use_container_width=True,
+        type="primary" if is_selected else "secondary"
+    ):
+        if is_selected:
+            st.session_state.selected_symptoms.remove(symptom)
+        else:
+            st.session_state.selected_symptoms.add(symptom)
+        st.rerun()
+
+selected_symptoms = list(st.session_state.selected_symptoms)
 
 symptoms = st.text_area(
     "Décrivez ce que vous ressentez...",
