@@ -129,6 +129,19 @@ if audio:
     if transcribed:
         st.session_state.symptoms_input = transcribed
 
+# Predefined Symptoms Selection
+PREDEFINED_SYMPTOMS = [
+    "Fièvre", "Maux de tête", "Toux", "Maux de gorge", "Essoufflement",
+    "Fatigue", "Douleurs musculaires", "Nausées", "Vomissements", "Diarrhée",
+    "Perte de goût/odorat", "Douleur thoracique", "Vertiges", "Éruption cutanée"
+]
+
+selected_symptoms = st.multiselect(
+    "Symptômes courants (optionnel) :",
+    PREDEFINED_SYMPTOMS,
+    help="Sélectionnez un ou plusieurs symptômes dans la liste."
+)
+
 symptoms = st.text_area(
     "Décrivez ce que vous ressentez...",
     value=st.session_state.symptoms_input,
@@ -142,12 +155,19 @@ with col1:
 
 # Analysis Logic
 if analyze_btn:
-    if not symptoms.strip():
-        st.error("Veuillez entrer une description des symptômes.")
+    if not symptoms.strip() and not selected_symptoms:
+        st.error("Veuillez décrire vos symptômes ou en sélectionner dans la liste.")
     else:
+        # Construct the full prompt
+        full_prompt = ""
+        if selected_symptoms:
+            full_prompt += f"Symptômes sélectionnés : {', '.join(selected_symptoms)}.\n"
+        if symptoms.strip():
+            full_prompt += f"Description détaillée : {symptoms}"
+
         with st.spinner(f"Analyse avec {MODEL_NAME}..."):
             start_time = datetime.now()
-            response = query_gemini(symptoms)
+            response = query_gemini(full_prompt)
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
             
