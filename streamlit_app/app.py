@@ -54,8 +54,32 @@ def query_gemini(prompt, system_instruction):
     except Exception as e:
         return f"Erreur API : {str(e)}"
 
+def transcribe_audio(audio_bytes):
+    """Transcrit les octets audio reçus du navigateur."""
+    recognizer = sr.Recognizer()
+    audio_file = io.BytesIO(audio_bytes)
+    with sr.AudioFile(audio_file) as source:
+        audio_data = recognizer.record(source)
+        try:
+            return recognizer.recognize_google(audio_data, language="fr-FR")
+        except:
+            return None
+
 # --- Interface Streamlit ---
 st.set_page_config(page_title="MedGemma Triage", page_icon="🏥")
+
+# Vérification de la clé au démarrage
+api_key_present = get_api_key() is not None
+
+# Sidebar - Context & Privacy
+with st.sidebar:
+    st.header("ℹ️ À propos")
+    if api_key_present:
+        st.success("✅ Clé API détectée")
+    else:
+        st.error("❌ Clé API manquante")
+    st.info(f"Modèle : `{MODEL_NAME}`\n\nProcessus : `Diagnostic en 2 étapes`")
+    st.warning("**DISCLAIMER MÉDICAL**\nCeci est un prototype. Ne pas utiliser pour de vraies urgences.")
 
 # Init Session State
 if 'step' not in st.session_state:
@@ -103,7 +127,6 @@ if st.session_state.step == 1:
     # Voice/Text Input
     audio = mic_recorder(start_prompt="🎤 Parler", stop_prompt="⏹️ Arrêter", key='recorder')
     if audio:
-        from app import transcribe_audio # Assuming it's in the same file or accessible
         transcribed = transcribe_audio(audio['bytes'])
         if transcribed: st.session_state.symptoms_input = transcribed
 
