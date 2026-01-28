@@ -13,15 +13,21 @@ from pyngrok import ngrok
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # --- CONFIGURATION ---
-# Remplacez par votre token ngrok (https://dashboard.ngrok.com/get-started/your-authtoken)
-# Si vous ne mettez pas de token, la session expirera vite.
+# 1. Votre token ngrok (https://dashboard.ngrok.com/get-started/your-authtoken)
 NGROK_AUTH_TOKEN = "VOTRE_TOKEN_NGROK_ICI" 
 
-# Modèle à utiliser (Gemma 2B IT est léger et performant pour ce test)
-# Vous pouvez remplacer par votre propre modèle fine-tuné sur Kaggle si disponible
+# 2. Votre token Hugging Face (https://huggingface.co/settings/tokens)
+# REQUIS car Gemma est un modèle "gated".
+HF_TOKEN = "VOTRE_TOKEN_HF_ICI"
+
+# Modèle à utiliser
 MODEL_ID = "google/gemma-2b-it" 
 
-# --- CHARGEMENT DU MODÈLE ---
+# --- AUTHENTIFICATION & CHARGEMENT ---
+from huggingface_hub import login
+if HF_TOKEN != "VOTRE_TOKEN_HF_ICI":
+    login(token=HF_TOKEN)
+
 print("🔄 Chargement du modèle...")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 model = AutoModelForCausalLM.from_pretrained(
