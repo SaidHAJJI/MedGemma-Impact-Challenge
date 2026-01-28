@@ -6,25 +6,29 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 import os
+import requests
+import json
 
 # --- Configuration ---
-# Utilisation du modèle Gemini 2.0 Flash
+# Utilisation du modèle Gemini 2.0 Flash par défaut pour l'API officielle
 MODEL_NAME = "gemini-2.0-flash"
 
-# --- System Prompts ---
+# --- System Prompts (Optimized V3 SafetyFirst) ---
 SYSTEM_PROMPT_QUESTIONS = """You are MedGemma, a medical triage expert. 
 Based on the symptoms provided, generate 3-4 essential follow-up questions to better assess the urgency.
-Keep questions brief and focused on red flags or duration. 
+Focus strictly on differentiating between benign issues and potential emergencies.
 Format as a simple bulleted list in French."""
 
 SYSTEM_PROMPT_FINAL = """You are MedGemma, a helpful medical triage assistant.
-CRITICAL: If symptoms suggest a life-threatening emergency, IMMEDIATELY tell the user to call emergency services (911/112).
-Analyze the initial symptoms, patient context, and answers to follow-up questions.
+CRITICAL: If symptoms suggest a life-threatening emergency (e.g., heart attack signs, stroke, severe bleeding, breathing difficulty), IMMEDIATELY tell the user to call emergency services (15/112) in the first line.
+
+For non-emergencies, analyze the context and provide:
 1. Urgency Level (Low, Medium, High).
-2. Possible causes (with caution).
+2. Possible causes (stated with caution as possibilities, not diagnosis).
 3. Immediate home care actions.
-4. Always advise seeing a doctor.
-Keep responses concise, structured, and empathetic."""
+4. Recommendation on when to see a doctor (e.g., "Within 4 hours", "Tomorrow").
+
+Keep responses concise, structured, and empathetic. Answer in French."""
 
 def get_api_key():
     """Récupère la clé API depuis les secrets ou l'environnement."""
@@ -32,27 +36,49 @@ def get_api_key():
         return st.secrets["GEMINI_API_KEY"]
     return os.getenv("GEMINI_API_KEY")
 
-def query_gemini(prompt, system_instruction):
-    """Envoie la requête à l'API Gemini."""
-    api_key = get_api_key()
-    if not api_key:
-        return "Erreur : Clé API manquante."
+def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None):
+    """Envoie la requête au LLM choisi (Gemini API ou Kaggle/Custom)."""
+    
+    # --- OPTION 1: KAGGLE / CUSTOM URL ---
+    if backend == "Kaggle / Local URL":
+        if not custom_url:
+            return "Erreur : URL du serveur manquante."
+        
+        endpoint = f"{custom_url.rstrip('/')}/generate"
+        payload = {
+            "prompt": prompt,
+            "system_instruction": system_instruction
+        }
+        try:
+            response = requests.post(endpoint, json=payload, timeout=60)
+            if response.status_code == 200:
+                return response.json().get("response", "Erreur: Réponse vide.")
+            else:
+                return f"Erreur Serveur ({response.status_code}): {response.text}"
+        except requests.exceptions.RequestException as e:
+            return f"Erreur de connexion au serveur Kaggle : {str(e)}"
 
-    try:
-        client = genai.Client(api_key=api_key)
-        config = types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.4,
-            max_output_tokens=600,
-        )
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=config
-        )
-        return response.text
-    except Exception as e:
-        return f"Erreur API : {str(e)}"
+    # --- OPTION 2: GOOGLE GEMINI API ---
+    else:
+        api_key = get_api_key()
+        if not api_key:
+            return "Erreur : Clé API manquante."
+
+        try:
+            client = genai.Client(api_key=api_key)
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.4,
+                max_output_tokens=600,
+            )
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=config
+            )
+            return response.text
+        except Exception as e:
+            return f"Erreur API Gemini : {str(e)}"
 
 def transcribe_audio(audio_bytes):
     """Transcrit les octets audio reçus du navigateur."""
@@ -73,12 +99,32 @@ api_key_present = get_api_key() is not None
 
 # Sidebar - Context & Privacy
 with st.sidebar:
+    st.header("⚙️ Configuration")
+    
+    # Choix du Backend
+    backend_option = st.radio(
+        "Source du Modèle :",
+        ("Gemini API", "Kaggle / Local URL")
+    )
+    
+    custom_url = None
+    if backend_option == "Kaggle / Local URL":
+        custom_url = st.text_input("URL ngrok (Kaggle) :", placeholder="https://xxxx.ngrok-free.app")
+        if not custom_url:
+            st.warning("⚠️ Collez l'URL ngrok ici")
+    
+    st.divider()
+    
     st.header("ℹ️ À propos")
-    if api_key_present:
-        st.success("✅ Clé API détectée")
+    if backend_option == "Gemini API":
+        if api_key_present:
+            st.success("✅ Clé API Gemini détectée")
+        else:
+            st.error("❌ Clé API manquante")
+        st.info(f"Modèle : `{MODEL_NAME}`")
     else:
-        st.error("❌ Clé API manquante")
-    st.info(f"Modèle : `{MODEL_NAME}`\n\nProcessus : `Diagnostic en 2 étapes`")
+        st.info("Mode : Serveur Distant (Kaggle)")
+        
     st.warning("**DISCLAIMER MÉDICAL**\nCeci est un prototype. Ne pas utiliser pour de vraies urgences.")
 
 # Init Session State
@@ -143,7 +189,7 @@ if st.session_state.step == 1:
             }
             with st.spinner("Analyse initiale..."):
                 prompt = f"Patient: {age} ans, {sexe}. Symptômes: {st.session_state.selected_symptoms}. Description: {symptoms_text}"
-                st.session_state.followup_questions = query_gemini(prompt, SYSTEM_PROMPT_QUESTIONS)
+                st.session_state.followup_questions = query_llm(prompt, SYSTEM_PROMPT_QUESTIONS, backend=backend_option, custom_url=custom_url)
                 st.session_state.step = 2
             st.rerun()
 
@@ -172,7 +218,7 @@ elif st.session_state.step == 2:
                 PRÉCISIONS APPORTÉES:
                 {answers}
                 """
-                st.session_state.final_report = query_gemini(final_prompt, SYSTEM_PROMPT_FINAL)
+                st.session_state.final_report = query_llm(final_prompt, SYSTEM_PROMPT_FINAL, backend=backend_option, custom_url=custom_url)
                 st.session_state.step = 3
             st.rerun()
 
