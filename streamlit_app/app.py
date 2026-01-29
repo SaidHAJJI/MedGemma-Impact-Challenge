@@ -9,10 +9,15 @@ import os
 import requests
 import json
 from pydub import AudioSegment
-import static_ffmpeg
+import shutil
 
-# Initialisation de ffmpeg pour pydub
-static_ffmpeg.add_paths()
+# Initialisation de ffmpeg pour pydub (seulement si non présent dans le système)
+if not shutil.which("ffmpeg"):
+    try:
+        import static_ffmpeg
+        static_ffmpeg.add_paths()
+    except Exception as e:
+        print(f"Note: static_ffmpeg n'a pas pu être initialisé ({e}). Assurez-vous que ffmpeg est installé manuellement.")
 
 # --- Configuration ---
 # Utilisation du modèle Gemini 2.0 Flash par défaut pour l'API officielle
