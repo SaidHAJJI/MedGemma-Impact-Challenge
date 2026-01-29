@@ -9,6 +9,10 @@ import os
 import requests
 import json
 from pydub import AudioSegment
+import static_ffmpeg
+
+# Initialisation de ffmpeg pour pydub
+static_ffmpeg.add_paths()
 
 # --- Configuration ---
 # Utilisation du modèle Gemini 2.0 Flash par défaut pour l'API officielle
