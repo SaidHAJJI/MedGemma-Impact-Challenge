@@ -3,3 +3,4 @@ requests
 speechrecognition>=3.10.0
 streamlit-mic-recorder
 google-genai
+pydub

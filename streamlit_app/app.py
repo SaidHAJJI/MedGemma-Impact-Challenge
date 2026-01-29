@@ -8,6 +8,7 @@ from google.genai import types
 import os
 import requests
 import json
+from pydub import AudioSegment
 
 # --- Configuration ---
 # Utilisation du modèle Gemini 2.0 Flash par défaut pour l'API officielle
@@ -81,31 +82,43 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
             return f"Erreur API Gemini : {str(e)}"
 
 def transcribe_audio(audio_bytes, backend="Gemini API", custom_url=None):
-    """Transcrit les octets audio en utilisant soit Google générique soit MedASR sur Kaggle."""
+    """Convertit l'audio en WAV puis transcrit via Kaggle ou Google."""
     
-    # --- OPTION KAGGLE (MedASR) ---
-    if backend == "Kaggle / Local URL" and custom_url:
-        try:
+    try:
+        # --- CONVERSION UNIVERSELLE EN WAV ---
+        # On utilise pydub pour lire n'importe quel format (WebM, AAC, etc.)
+        audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        
+        # On exporte en WAV (format PCM standard)
+        wav_io = io.BytesIO()
+        audio_segment.export(wav_io, format="wav")
+        wav_io.seek(0)
+        wav_bytes = wav_io.read()
+        
+        # --- OPTION KAGGLE (MedASR) ---
+        if backend == "Kaggle / Local URL" and custom_url:
             endpoint = f"{custom_url.rstrip('/')}/transcribe"
-            files = {'audio': ('audio.wav', audio_bytes, 'audio/wav')}
+            files = {'audio': ('audio.wav', wav_bytes, 'audio/wav')}
             response = requests.post(endpoint, files=files, timeout=30)
             if response.status_code == 200:
                 return response.json().get("transcription")
             else:
                 st.error(f"Erreur MedASR ({response.status_code}): {response.text}")
-        except Exception as e:
-            st.error(f"Erreur de connexion MedASR : {e}")
-        return None
+                return None
 
-    # --- OPTION STANDARD (Google Speech Recognition) ---
-    recognizer = sr.Recognizer()
-    audio_file = io.BytesIO(audio_bytes)
-    with sr.AudioFile(audio_file) as source:
-        audio_data = recognizer.record(source)
-        try:
-            return recognizer.recognize_google(audio_data, language="fr-FR")
-        except:
-            return None
+        # --- OPTION STANDARD (Google Speech Recognition) ---
+        recognizer = sr.Recognizer()
+        wav_io.seek(0)
+        with sr.AudioFile(wav_io) as source:
+            audio_data = recognizer.record(source)
+            try:
+                return recognizer.recognize_google(audio_data, language="fr-FR")
+            except:
+                return None
+            
+    except Exception as e:
+        st.error(f"Erreur de traitement audio : {e}")
+        return None
 
 # --- Interface Streamlit ---
 st.set_page_config(page_title="MedGemma Triage", page_icon="🏥")
