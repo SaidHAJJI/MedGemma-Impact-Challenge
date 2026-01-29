@@ -80,8 +80,24 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
         except Exception as e:
             return f"Erreur API Gemini : {str(e)}"
 
-def transcribe_audio(audio_bytes):
-    """Transcrit les octets audio reçus du navigateur."""
+def transcribe_audio(audio_bytes, backend="Gemini API", custom_url=None):
+    """Transcrit les octets audio en utilisant soit Google générique soit MedASR sur Kaggle."""
+    
+    # --- OPTION KAGGLE (MedASR) ---
+    if backend == "Kaggle / Local URL" and custom_url:
+        try:
+            endpoint = f"{custom_url.rstrip('/')}/transcribe"
+            files = {'audio': ('audio.wav', audio_bytes, 'audio/wav')}
+            response = requests.post(endpoint, files=files, timeout=30)
+            if response.status_code == 200:
+                return response.json().get("transcription")
+            else:
+                st.error(f"Erreur MedASR ({response.status_code}): {response.text}")
+        except Exception as e:
+            st.error(f"Erreur de connexion MedASR : {e}")
+        return None
+
+    # --- OPTION STANDARD (Google Speech Recognition) ---
     recognizer = sr.Recognizer()
     audio_file = io.BytesIO(audio_bytes)
     with sr.AudioFile(audio_file) as source:
@@ -173,7 +189,7 @@ if st.session_state.step == 1:
     # Voice/Text Input
     audio = mic_recorder(start_prompt="🎤 Parler", stop_prompt="⏹️ Arrêter", key='recorder')
     if audio:
-        transcribed = transcribe_audio(audio['bytes'])
+        transcribed = transcribe_audio(audio['bytes'], backend=backend_option, custom_url=custom_url)
         if transcribed: st.session_state.symptoms_input = transcribed
 
     symptoms_text = st.text_area("Description libre :", value=st.session_state.symptoms_input, height=100)
