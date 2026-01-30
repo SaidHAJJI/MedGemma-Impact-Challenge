@@ -10,6 +10,7 @@ import requests
 import json
 from pydub import AudioSegment
 import shutil
+from fpdf import FPDF
 
 # Initialisation de ffmpeg pour pydub (seulement si non présent dans le système)
 if not shutil.which("ffmpeg"):
@@ -22,6 +23,60 @@ if not shutil.which("ffmpeg"):
 # --- Configuration ---
 # Utilisation du modèle Gemini 2.0 Flash par défaut pour l'API officielle
 MODEL_NAME = "gemini-2.0-flash"
+
+# --- PDF Generation Class ---
+class MedGemmaPDF(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 15)
+        self.cell(0, 10, 'Rapport de Triage MedGemma', 0, 1, 'C')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+        self.cell(0, 10, 'Généré par MedGemma - Prototype IA', 0, 0, 'R')
+
+def create_pdf(report_text, patient_data):
+    """Génère un PDF simple avec le rapport."""
+    pdf = MedGemmaPDF()
+    pdf.add_page()
+    
+    # Méta-données
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 5, f"Date: {datetime.now().strftime('%d/%m/%Y %H:%M')}", 0, 1)
+    pdf.ln(5)
+    
+    # Info Patient
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, "Informations Patient", 0, 1)
+    pdf.set_font("Arial", size=11)
+    pdf.cell(0, 6, f"Age: {patient_data.get('age')} ans", 0, 1)
+    pdf.cell(0, 6, f"Sexe: {patient_data.get('sexe')}", 0, 1)
+    
+    # Symptomes
+    symptoms_list = ", ".join(patient_data.get('symptoms', []))
+    pdf.multi_cell(0, 6, f"Symptômes: {symptoms_list}")
+    if patient_data.get('description'):
+         pdf.multi_cell(0, 6, f"Description: {patient_data.get('description')}")
+    pdf.ln(5)
+    
+    # Rapport LLM
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, "Analyse & Recommandations", 0, 1)
+    pdf.set_font("Arial", size=11)
+    
+    # Nettoyage basique des caractères non supportés par latin-1
+    safe_text = report_text.encode('latin-1', 'replace').decode('latin-1')
+    pdf.multi_cell(0, 6, safe_text)
+    
+    # Disclaimer
+    pdf.ln(10)
+    pdf.set_font("Arial", 'I', 9)
+    pdf.set_text_color(200, 0, 0)
+    pdf.multi_cell(0, 5, "AVERTISSEMENT: Ce rapport est généré par une IA (Gemma 2b / Gemini). Il ne remplace pas un avis médical professionnel. En cas d'urgence, appelez le 15 ou le 112.")
+    
+    return pdf.output(dest='S').encode('latin-1')
 
 # --- System Prompts (Optimized V3 SafetyFirst) ---
 SYSTEM_PROMPT_QUESTIONS = """You are MedGemma, a medical triage expert. 
@@ -151,7 +206,7 @@ with st.sidebar:
         if not custom_url:
             st.warning("⚠️ Collez l'URL ngrok ici")
     
-    st.divider()
+    st.divider() 
     
     st.header("ℹ️ À propos")
     if backend_option == "Gemini API":
@@ -203,7 +258,7 @@ if st.session_state.step == 1:
     for i, symptom in enumerate(PREDEFINED_SYMPTOMS):
         col = cols[i % 4]
         is_selected = symptom in st.session_state.selected_symptoms
-        if col.button(f"{'✅ ' if is_selected else ''}{symptom}", key=f"btn_{symptom}", use_container_width=True, type="primary" if is_selected else "secondary"):
+        if col.button(f"{'' if is_selected else ''}{symptom}", key=f"btn_{symptom}", use_container_width=True, type="primary" if is_selected else "secondary"):
             if is_selected: st.session_state.selected_symptoms.remove(symptom)
             else: st.session_state.selected_symptoms.add(symptom)
             st.rerun()
@@ -265,11 +320,27 @@ elif st.session_state.step == 3:
     st.success("✅ Analyse de triage terminée")
     st.markdown(st.session_state.final_report)
     
-    if st.button("🔄 Nouvelle analyse"):
-        st.session_state.step = 1
-        st.session_state.selected_symptoms = set()
-        st.session_state.symptoms_input = ""
-        st.rerun()
+    col_dl, col_new = st.columns([1, 1])
+    
+    with col_dl:
+        # PDF Generation
+        try:
+            pdf_bytes = create_pdf(st.session_state.final_report, st.session_state.initial_data)
+            st.download_button(
+                label="📄 Télécharger le Rapport (PDF)",
+                data=pdf_bytes,
+                file_name=f"Rapport_MedGemma_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf"
+            )
+        except Exception as e:
+            st.error(f"Erreur lors de la génération du PDF: {e}")
+
+    with col_new:
+        if st.button("🔄 Nouvelle analyse"):
+            st.session_state.step = 1
+            st.session_state.selected_symptoms = set()
+            st.session_state.symptoms_input = ""
+            st.rerun()
 
 
 # Footer

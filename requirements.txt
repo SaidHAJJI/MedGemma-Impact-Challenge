@@ -5,3 +5,4 @@ streamlit-mic-recorder
 google-genai
 pydub
 static-ffmpeg
+fpdf
