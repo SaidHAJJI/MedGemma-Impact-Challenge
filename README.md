@@ -30,5 +30,7 @@ Ouvrez le dossier `android_app` dans Android Studio et lancez le build.
 
 ## Roadmap
 - [x] Squelette de l'application (Texte).
-- [ ] Intégration Vocale (Speech-to-Text).
-- [ ] Optimisation du Prompt pour le contexte médical.
+- [x] Intégration Vocale (Speech-to-Text).
+- [x] Optimisation du Prompt pour le contexte médical (V3 SafetyFirst).
+- [x] Triage en 2 étapes (Questions -> Rapport).
+- [ ] Export du rapport en PDF (Android).
