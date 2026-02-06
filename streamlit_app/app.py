@@ -54,9 +54,18 @@ def create_pdf(report_text, patient_data):
     pdf.cell(0, 6, f"Age: {patient_data.get('age')} ans", 0, 1)
     pdf.cell(0, 6, f"Sexe: {patient_data.get('sexe')}", 0, 1)
     
+    # Terrain & Antécédents
+    history = patient_data.get('history', [])
+    if history:
+        pdf.multi_cell(0, 6, f"Antecedents: {', '.join(history)}")
+    
+    meds = patient_data.get('meds', '')
+    if meds:
+        pdf.multi_cell(0, 6, f"Traitements/Allergies: {meds}")
+    
     # Symptomes
     symptoms_list = ", ".join(patient_data.get('symptoms', []))
-    pdf.multi_cell(0, 6, f"Symptômes: {symptoms_list}")
+    pdf.multi_cell(0, 6, f"Symptomes: {symptoms_list}")
     if patient_data.get('description'):
          pdf.multi_cell(0, 6, f"Description: {patient_data.get('description')}")
     pdf.ln(5)
@@ -248,20 +257,41 @@ if 'selected_symptoms' not in st.session_state:
     st.session_state.selected_symptoms = set()
 if 'symptoms_input' not in st.session_state:
     st.session_state.symptoms_input = ""
+if 'medical_history' not in st.session_state:
+    st.session_state.medical_history = []
 
 st.title("🏥 MedGemma Triage")
 st.markdown("---")
 
 # --- STEP 1: INITIAL INPUT ---
 if st.session_state.step == 1:
-    st.subheader("1. Informations de base")
+    st.subheader("1. Profil Patient")
     col_age, col_sex = st.columns(2)
     with col_age:
         age = st.number_input("Âge", min_value=0, max_value=120, value=30)
     with col_sex:
         sexe = st.selectbox("Sexe", ["Masculin", "Féminin", "Autre"])
 
-    st.subheader("2. Symptômes")
+    st.subheader("2. Antécédents & Terrain")
+    col_hist1, col_hist2 = st.columns(2)
+    
+    with col_hist1:
+        diabetes = st.checkbox("Diabète")
+        hypertension = st.checkbox("Hypertension")
+        heart_disease = st.checkbox("Maladie Cardiaque")
+    with col_hist2:
+        asthma = st.checkbox("Asthme / BPCO")
+        immunosup = st.checkbox("Immunodépression")
+        smoker = st.checkbox("Fumeur")
+    
+    if sexe == "Féminin":
+        pregnant = st.checkbox("Grossesse en cours")
+    else:
+        pregnant = False
+
+    meds_allergies = st.text_input("Traitements actuels ou allergies connues :", placeholder="Ex: Doliprane, allergie à la pénicilline...")
+
+    st.subheader("3. Symptômes")
     
     # Predefined Symptoms Selection
     PREDEFINED_SYMPTOMS = [
@@ -292,13 +322,30 @@ if st.session_state.step == 1:
         if not symptoms_text.strip() and not st.session_state.selected_symptoms:
             st.error("Précisez vos symptômes.")
         else:
+            # Compiler les antécédents
+            history = []
+            if diabetes: history.append("Diabétique")
+            if hypertension: history.append("Hypertendu")
+            if heart_disease: history.append("Maladie cardiaque")
+            if asthma: history.append("Asthme/BPCO")
+            if immunosup: history.append("Immunodéprimé")
+            if smoker: history.append("Fumeur")
+            if pregnant: history.append("Enceinte")
+
             st.session_state.initial_data = {
-                "age": age, "sexe": sexe, 
+                "age": age, 
+                "sexe": sexe, 
+                "history": history,
+                "meds": meds_allergies,
                 "symptoms": list(st.session_state.selected_symptoms),
                 "description": symptoms_text
             }
             with st.spinner("Analyse initiale..."):
-                prompt = f"Patient: {age} ans, {sexe}. Symptômes: {st.session_state.selected_symptoms}. Description: {symptoms_text}"
+                prompt = f"""Patient: {age} ans, {sexe}. 
+                Terrain: {', '.join(history) if history else 'Aucun antécédent majeur'}.
+                Traitements/Allergies: {meds_allergies}.
+                Symptômes: {st.session_state.selected_symptoms}. 
+                Description: {symptoms_text}"""
                 st.session_state.followup_questions = query_llm(prompt, SYSTEM_PROMPT_QUESTIONS, backend=backend_option, custom_url=custom_url)
                 st.session_state.step = 2
             st.rerun()
@@ -346,6 +393,8 @@ elif st.session_state.step == 2:
                 final_prompt = f"""
                 CONTEXTE:
                 - Patient: {st.session_state.initial_data['age']} ans, {st.session_state.initial_data['sexe']}
+                - Terrain: {', '.join(st.session_state.initial_data['history'])}
+                - Traitements/Allergies: {st.session_state.initial_data['meds']}
                 - Symptômes: {st.session_state.initial_data['symptoms']}
                 - Description: {st.session_state.initial_data['description']}
                 
