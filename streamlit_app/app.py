@@ -87,33 +87,38 @@ def create_pdf(report_text, patient_data):
     
     return pdf.output(dest='S').encode('latin-1')
 
-# --- System Prompts (Optimized V3 SafetyFirst) ---
+# --- System Prompts (Optimized V4 SafetyFirst & Context Aware) ---
 SYSTEM_PROMPT_QUESTIONS = """You are MedGemma, a medical triage expert. 
-Based on the symptoms provided, generate 3-4 essential follow-up questions in JSON format.
+Analyze the patient context (age, history, symptoms).
+If the patient is a child (<15y) or elderly (>70y), focus on age-specific warning signs.
+
+Generate 3-4 essential follow-up questions in JSON format.
 Each question must have:
 1. "text": The question in French.
-2. "type": "binary" (for Oui/Non) or "numeric" (for values like temperature, days, score 1-10, etc.).
+2. "type": "binary" (for Oui/Non) or "numeric" (for values).
 3. "unit": A short label for the unit (e.g., "°C", "jours", "/10") if numeric, else null.
 
-Focus strictly on differentiating between benign issues and potential emergencies.
-Example format:
-[
-  {"text": "Avez-vous une douleur thoracique ?", "type": "binary", "unit": null},
-  {"text": "Quelle est votre température ?", "type": "numeric", "unit": "°C"},
-  {"text": "Depuis combien de jours ?", "type": "numeric", "unit": "jours"}
-]
+Rules:
+- Strictly medically relevant.
+- NO medical advice at this stage.
+- Focus on urgency markers (red flags).
 Return ONLY the JSON array."""
 
 SYSTEM_PROMPT_FINAL = """You are MedGemma, a helpful medical triage assistant.
-CRITICAL: If symptoms suggest a life-threatening emergency (e.g., heart attack signs, stroke, severe bleeding, breathing difficulty), IMMEDIATELY tell the user to call emergency services (15/112) in the first line.
+CRITICAL: If symptoms suggest a life-threatening emergency (e.g., heart attack signs, stroke, severe bleeding, breathing difficulty, or high fever in infants), IMMEDIATELY tell the user to call 15 or 112 in BOLD RED as the first sentence.
 
-For non-emergencies, analyze the context and provide:
-1. Urgency Level (Low, Medium, High).
-2. Possible causes (stated with caution as possibilities, not diagnosis).
-3. Immediate home care actions.
-4. Recommendation on when to see a doctor (e.g., "Within 4 hours", "Tomorrow").
+Structure your response in French as follows:
+## 🚨 Niveau d'Urgence : [Faible/Moyen/Haut/URGENCE VITALE]
 
-Keep responses concise, structured, and empathetic. Answer in French."""
+### 🩺 Analyse de la situation
+(Provide a brief, cautious analysis based on the profile and symptoms. Use emojis.)
+
+### 📋 Recommandations
+1. **Délai de consultation** : [e.g., Immédiat, < 4h, Demain, etc.]
+2. **Conseils d'auto-soins** : (Simple actions)
+3. **Signes d'alerte** : (When to call emergency if situation evolves)
+
+Keep it professional, empathetic, and concise. No definitive diagnosis."""
 
 def get_api_key():
     """Récupère la clé API depuis les secrets ou l'environnement."""
@@ -154,7 +159,7 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.4,
-                max_output_tokens=800,
+                max_output_tokens=1000,
             )
             response = client.models.generate_content(
                 model=MODEL_NAME,
@@ -163,9 +168,9 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
             )
             # Nettoyage si le modèle entoure le JSON de ```json ... ```
             text = response.text.strip()
-            if text.startswith("```json"):
+            if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()
-            elif text.startswith("```"):
+            elif "```" in text:
                 text = text.split("```")[1].split("```")[0].strip()
             return text
         except Exception as e:
@@ -340,13 +345,17 @@ if st.session_state.step == 1:
                 "symptoms": list(st.session_state.selected_symptoms),
                 "description": symptoms_text
             }
-            with st.spinner("Analyse initiale..."):
+            
+            with st.status("🩺 Analyse initiale des symptômes...", expanded=True) as status:
+                st.write("Vérification des constantes...")
                 prompt = f"""Patient: {age} ans, {sexe}. 
                 Terrain: {', '.join(history) if history else 'Aucun antécédent majeur'}.
                 Traitements/Allergies: {meds_allergies}.
                 Symptômes: {st.session_state.selected_symptoms}. 
                 Description: {symptoms_text}"""
+                
                 st.session_state.followup_questions = query_llm(prompt, SYSTEM_PROMPT_QUESTIONS, backend=backend_option, custom_url=custom_url)
+                status.update(label="✅ Analyse terminée !", state="complete", expanded=False)
                 st.session_state.step = 2
             st.rerun()
 
@@ -367,14 +376,16 @@ elif st.session_state.step == 2:
     user_responses = {}
     
     if questions_data:
-        for i, q in enumerate(questions_data):
-            st.write(f"**Q{i+1}: {q['text']}**")
-            if q['type'] == 'binary':
-                user_responses[q['text']] = st.radio(f"Réponse Q{i+1}", ["Non", "Oui"], key=f"q_{i}", label_visibility="collapsed")
-            elif q['type'] == 'numeric':
-                unit = q.get('unit', '')
-                user_responses[q['text']] = st.number_input(f"Valeur ({unit})", key=f"q_{i}", step=0.5 if unit == "°C" else 1.0)
-            st.divider()
+        with st.container(border=True):
+            for i, q in enumerate(questions_data):
+                st.write(f"**Q{i+1}: {q['text']}**")
+                if q['type'] == 'binary':
+                    user_responses[q['text']] = st.radio(f"Réponse Q{i+1}", ["Non", "Oui"], key=f"q_{i}", label_visibility="collapsed", horizontal=True)
+                elif q['type'] == 'numeric':
+                    unit = q.get('unit', '')
+                    user_responses[q['text']] = st.number_input(f"Valeur ({unit})", key=f"q_{i}", step=0.1 if unit == "°C" else 1.0)
+                if i < len(questions_data) - 1:
+                    st.divider()
 
     col_back, col_next = st.columns([1, 1])
     with col_back:
@@ -383,7 +394,8 @@ elif st.session_state.step == 2:
             st.rerun()
     with col_next:
         if st.button("Obtenir le rapport final 🔍", type="primary"):
-            with st.spinner("Génération du rapport de triage..."):
+            with st.status("🧠 Génération du rapport de triage...", expanded=True) as status:
+                st.write("Synthèse des données...")
                 # Formatage des réponses pour le prompt final
                 if questions_data:
                     formatted_answers = "\n".join([f"- {k}: {v}" for k, v in user_responses.items()])
@@ -402,14 +414,27 @@ elif st.session_state.step == 2:
                 {formatted_answers}
                 """
                 st.session_state.final_report = query_llm(final_prompt, SYSTEM_PROMPT_FINAL, backend=backend_option, custom_url=custom_url)
+                status.update(label="✅ Rapport prêt !", state="complete", expanded=False)
                 st.session_state.step = 3
             st.rerun()
 
 # --- STEP 3: FINAL REPORT ---
 elif st.session_state.step == 3:
     st.success("✅ Analyse de triage terminée")
-    st.markdown(st.session_state.final_report)
     
+    # Indicateur d'urgence visuel (Simple regex/search)
+    report = st.session_state.final_report
+    if "URGENCE VITALE" in report.upper() or "15" in report or "112" in report:
+        st.error("🆘 **ALERTE : URGENCE VITALE DÉTECTÉE. APPELEZ LE 15 OU LE 112 IMMÉDIATEMENT.**")
+    
+    with st.expander("📝 Récapitulatif du profil patient", expanded=False):
+        st.write(f"**Âge :** {st.session_state.initial_data['age']} ans | **Sexe :** {st.session_state.initial_data['sexe']}")
+        st.write(f"**Terrain :** {', '.join(st.session_state.initial_data['history']) if st.session_state.initial_data['history'] else 'Aucun'}")
+        st.write(f"**Symptômes :** {', '.join(st.session_state.initial_data['symptoms'])}")
+
+    st.markdown(report)
+    
+    st.divider()
     col_dl, col_new = st.columns([1, 1])
     
     with col_dl:
