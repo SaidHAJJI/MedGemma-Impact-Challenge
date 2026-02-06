@@ -142,7 +142,7 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
         try:
             response = requests.post(endpoint, json=payload, timeout=60)
             if response.status_code == 200:
-                return response.json().get("response", "Erreur: Réponse vide.")
+                text = response.json().get("response", "Erreur: Réponse vide.")
             else:
                 return f"Erreur Serveur ({response.status_code}): {response.text}"
         except requests.exceptions.RequestException as e:
@@ -158,7 +158,7 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
             client = genai.Client(api_key=api_key)
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=0.4,
+                temperature=0.2, # Température plus basse pour le JSON
                 max_output_tokens=1000,
             )
             response = client.models.generate_content(
@@ -166,15 +166,29 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
                 contents=prompt,
                 config=config
             )
-            # Nettoyage si le modèle entoure le JSON de ```json ... ```
             text = response.text.strip()
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
-            return text
         except Exception as e:
             return f"Erreur API Gemini : {str(e)}"
+
+    # --- NETTOYAGE ROBUSTE DU JSON ---
+    try:
+        # 1. Extraction du bloc entre ```json et ``` ou ```
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        
+        # 2. Si le modèle a oublié les crochets [ ] mais a mis des objets { } { }
+        if text.startswith("{") and not text.startswith("["):
+            # On tente de transformer "{...} {...}" en "[{...}, {...}]"
+            cleaned = text.replace("}\n{", "},{").replace("} {", "},{")
+            text = f"[{cleaned}]"
+        
+        # 3. Validation
+        json.loads(text) 
+        return text
+    except:
+        return text
 
 def transcribe_audio(audio_bytes, backend="Gemini API", custom_url=None):
     """Convertit l'audio en WAV puis transcrit via Kaggle ou Google."""
@@ -365,27 +379,40 @@ elif st.session_state.step == 2:
     st.info("Pour affiner le triage, veuillez répondre à ces questions :")
     
     questions_data = []
+    parsing_error = False
     try:
-        # Tentative de parsing du JSON
         questions_data = json.loads(st.session_state.followup_questions)
+        if not isinstance(questions_data, list):
+            parsing_error = True
     except:
-        # Fallback si le format n'est pas du JSON
-        st.markdown(st.session_state.followup_questions)
-        answers = st.text_area("Vos réponses :", height=150)
+        parsing_error = True
     
     user_responses = {}
     
-    if questions_data:
+    if not parsing_error and questions_data:
         with st.container(border=True):
             for i, q in enumerate(questions_data):
-                st.write(f"**Q{i+1}: {q['text']}**")
-                if q['type'] == 'binary':
-                    user_responses[q['text']] = st.radio(f"Réponse Q{i+1}", ["Non", "Oui"], key=f"q_{i}", label_visibility="collapsed", horizontal=True)
-                elif q['type'] == 'numeric':
+                q_text = q.get('text', f"Question {i+1}")
+                st.write(f"**Q{i+1}: {q_text}**")
+                q_type = q.get('type', 'binary')
+                
+                if q_type == 'binary':
+                    user_responses[q_text] = st.radio(f"Réponse Q{i+1}", ["Non", "Oui"], key=f"q_{i}", label_visibility="collapsed", horizontal=True)
+                elif q_type == 'numeric':
                     unit = q.get('unit', '')
-                    user_responses[q['text']] = st.number_input(f"Valeur ({unit})", key=f"q_{i}", step=0.1 if unit == "°C" else 1.0)
+                    # Correction auto des unités bizarres (ex: fatigue en °C)
+                    if "fatigue" in q_text.lower() and unit == "°C": unit = "/10"
+                    
+                    val = st.number_input(f"Valeur ({unit})", key=f"q_{i}", step=0.1 if "°" in unit else 1.0)
+                    user_responses[q_text] = val
+                
                 if i < len(questions_data) - 1:
                     st.divider()
+    else:
+        # Mode dégradé si le JSON est corrompu
+        st.warning("⚠️ Note : Le format des questions est simplifié pour cette analyse.")
+        st.markdown(st.session_state.followup_questions)
+        answers = st.text_area("Vos réponses (format libre) :", height=150, placeholder="Ex: Pas de douleur, fièvre à 38.5...")
 
     col_back, col_next = st.columns([1, 1])
     with col_back:
@@ -397,7 +424,7 @@ elif st.session_state.step == 2:
             with st.status("🧠 Génération du rapport de triage...", expanded=True) as status:
                 st.write("Synthèse des données...")
                 # Formatage des réponses pour le prompt final
-                if questions_data:
+                if not parsing_error and questions_data:
                     formatted_answers = "\n".join([f"- {k}: {v}" for k, v in user_responses.items()])
                 else:
                     formatted_answers = answers
