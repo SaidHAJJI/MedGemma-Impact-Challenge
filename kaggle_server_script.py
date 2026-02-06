@@ -18,17 +18,34 @@ try:
 except:
     pass
 
-print("📦 Installation des versions compatibles...")
-# On force des versions récentes qui fonctionnent ensemble
-run_command("pip install -q -U huggingface_hub>=0.23.0 transformers>=4.41.0 flask flask-cors pyngrok accelerate bitsandbytes librosa soundfile")
+print("📦 Installation des versions compatibles (Pinning)...")
+# On force des versions stables connues pour fonctionner ensemble sur Kaggle
+run_command("pip install -q -U 'huggingface_hub<0.26.0' 'transformers<4.47.0' 'pydantic<2.12' flask flask-cors pyngrok accelerate bitsandbytes librosa soundfile")
 
 # --- 2. PATCHS DE COMPATIBILITÉ (CRUCIAL) ---
 # On applique ces patchs AVANT d'importer transformers
-print("🔧 Application des correctifs mémoire...")
+print("🔧 Application des correctifs de compatibilité...")
 
 import huggingface_hub
+import huggingface_hub.utils
 import huggingface_hub.errors
 import huggingface_hub.file_download
+import huggingface_hub.constants
+
+# Patch 0 : is_tqdm_disabled
+if not hasattr(huggingface_hub.utils, 'is_tqdm_disabled'):
+    def is_tqdm_disabled(): return False
+    huggingface_hub.utils.is_tqdm_disabled = is_tqdm_disabled
+    sys.modules['huggingface_hub.utils'].is_tqdm_disabled = is_tqdm_disabled
+    print("  ✅ Patch is_tqdm_disabled appliqué.")
+
+# Patch 0.1 : is_offline_mode (Correction de la nouvelle erreur)
+def is_offline_mode(): return False
+for module in [huggingface_hub, huggingface_hub.utils, huggingface_hub.constants]:
+    if not hasattr(module, 'is_offline_mode'):
+        setattr(module, 'is_offline_mode', is_offline_mode)
+sys.modules['huggingface_hub'].is_offline_mode = is_offline_mode
+print("  ✅ Patch is_offline_mode appliqué.")
 
 # Patch 1 : DryRunError
 if not hasattr(huggingface_hub.errors, 'DryRunError'):
@@ -61,15 +78,28 @@ from transformers import (
 )
 from huggingface_hub import login
 
-# === VOS TOKENS (RÉCUPÉRÉS DE VOTRE MESSAGES) ===
-NGROK_AUTH_TOKEN = "VOTRE_TOKEN_NGROK_ICI" 
-HF_TOKEN = "VOTRE_TOKEN_HF_ICI"
+# === VOS TOKENS (SÉCURISÉS VIA KAGGLE SECRETS) ===
+try:
+    from kaggle_secrets import UserData
+    NGROK_AUTH_TOKEN = UserData().get('NGROK_AUTH_TOKEN')
+    HF_TOKEN = UserData().get('HF_TOKEN')
+    print("✅ Tokens récupérés depuis Kaggle Secrets.")
+except Exception:
+    # Si pas sur Kaggle ou secrets non configurés, utilisez les placeholders
+    NGROK_AUTH_TOKEN = "VOTRE_TOKEN_NGROK_ICI" 
+    HF_TOKEN = "VOTRE_TOKEN_HF_ICI"
+    print("⚠️ Utilisation des tokens manuels (placeholders).")
 
 # --- AUTHENTIFICATION ---
-if HF_TOKEN:
-    login(token=HF_TOKEN)
-
-# --- CHARGEMENT DES MODÈLES ---
+if HF_TOKEN and HF_TOKEN != "VOTRE_TOKEN_HF_ICI":
+    try:
+        login(token=HF_TOKEN)
+        print("✅ Authentification Hugging Face réussie.")
+    except Exception as e:
+        print(f"❌ Erreur Authentification HF : {e}")
+        print("Vérifiez votre jeton sur hf.co/settings/tokens et acceptez la licence Gemma.")
+else:
+    print("❌ Erreur : Aucun jeton HF_TOKEN valide trouvé.")
 LLM_MODEL_ID = "google/gemma-2b-it" 
 ASR_MODEL_ID = "google/medasr"
 

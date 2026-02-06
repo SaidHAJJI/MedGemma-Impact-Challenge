@@ -80,9 +80,20 @@ def create_pdf(report_text, patient_data):
 
 # --- System Prompts (Optimized V3 SafetyFirst) ---
 SYSTEM_PROMPT_QUESTIONS = """You are MedGemma, a medical triage expert. 
-Based on the symptoms provided, generate 3-4 essential follow-up questions to better assess the urgency.
+Based on the symptoms provided, generate 3-4 essential follow-up questions in JSON format.
+Each question must have:
+1. "text": The question in French.
+2. "type": "binary" (for Oui/Non) or "numeric" (for values like temperature, days, score 1-10, etc.).
+3. "unit": A short label for the unit (e.g., "°C", "jours", "/10") if numeric, else null.
+
 Focus strictly on differentiating between benign issues and potential emergencies.
-Format as a simple bulleted list in French."""
+Example format:
+[
+  {"text": "Avez-vous une douleur thoracique ?", "type": "binary", "unit": null},
+  {"text": "Quelle est votre température ?", "type": "numeric", "unit": "°C"},
+  {"text": "Depuis combien de jours ?", "type": "numeric", "unit": "jours"}
+]
+Return ONLY the JSON array."""
 
 SYSTEM_PROMPT_FINAL = """You are MedGemma, a helpful medical triage assistant.
 CRITICAL: If symptoms suggest a life-threatening emergency (e.g., heart attack signs, stroke, severe bleeding, breathing difficulty), IMMEDIATELY tell the user to call emergency services (15/112) in the first line.
@@ -134,14 +145,20 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.4,
-                max_output_tokens=600,
+                max_output_tokens=800,
             )
             response = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=prompt,
                 config=config
             )
-            return response.text
+            # Nettoyage si le modèle entoure le JSON de ```json ... ```
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif text.startswith("```"):
+                text = text.split("```")[1].split("```")[0].strip()
+            return text
         except Exception as e:
             return f"Erreur API Gemini : {str(e)}"
 
@@ -290,10 +307,28 @@ if st.session_state.step == 1:
 elif st.session_state.step == 2:
     st.subheader("🔍 Précisions nécessaires")
     st.info("Pour affiner le triage, veuillez répondre à ces questions :")
-    st.markdown(st.session_state.followup_questions)
     
-    answers = st.text_area("Vos réponses :", height=150, placeholder="Ex: La douleur dure depuis 2 jours, c'est apparu après manger...")
+    questions_data = []
+    try:
+        # Tentative de parsing du JSON
+        questions_data = json.loads(st.session_state.followup_questions)
+    except:
+        # Fallback si le format n'est pas du JSON
+        st.markdown(st.session_state.followup_questions)
+        answers = st.text_area("Vos réponses :", height=150)
     
+    user_responses = {}
+    
+    if questions_data:
+        for i, q in enumerate(questions_data):
+            st.write(f"**Q{i+1}: {q['text']}**")
+            if q['type'] == 'binary':
+                user_responses[q['text']] = st.radio(f"Réponse Q{i+1}", ["Non", "Oui"], key=f"q_{i}", label_visibility="collapsed")
+            elif q['type'] == 'numeric':
+                unit = q.get('unit', '')
+                user_responses[q['text']] = st.number_input(f"Valeur ({unit})", key=f"q_{i}", step=0.5 if unit == "°C" else 1.0)
+            st.divider()
+
     col_back, col_next = st.columns([1, 1])
     with col_back:
         if st.button("⬅️ Retour"):
@@ -302,14 +337,20 @@ elif st.session_state.step == 2:
     with col_next:
         if st.button("Obtenir le rapport final 🔍", type="primary"):
             with st.spinner("Génération du rapport de triage..."):
+                # Formatage des réponses pour le prompt final
+                if questions_data:
+                    formatted_answers = "\n".join([f"- {k}: {v}" for k, v in user_responses.items()])
+                else:
+                    formatted_answers = answers
+                
                 final_prompt = f"""
                 CONTEXTE:
                 - Patient: {st.session_state.initial_data['age']} ans, {st.session_state.initial_data['sexe']}
                 - Symptômes: {st.session_state.initial_data['symptoms']}
                 - Description: {st.session_state.initial_data['description']}
                 
-                PRÉCISIONS APPORTÉES:
-                {answers}
+                RÉPONSES AUX QUESTIONS DE PRÉCISION:
+                {formatted_answers}
                 """
                 st.session_state.final_report = query_llm(final_prompt, SYSTEM_PROMPT_FINAL, backend=backend_option, custom_url=custom_url)
                 st.session_state.step = 3
