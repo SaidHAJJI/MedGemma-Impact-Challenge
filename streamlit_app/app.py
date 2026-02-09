@@ -119,14 +119,33 @@ Structure your response in French as follows:
 (Provide a brief, cautious analysis based on the profile and symptoms. Use emojis.)
 
 ### 🧠 Raisonnement Clinique (Le "Pourquoi ?")
-(Explication pédagogique simple sur pourquoi ce niveau d'urgence a été choisi, quels sont les facteurs de risque identifiés et les signes positifs/négatifs importants. C'est ici que vous rassurez ou alertez avec pédagogie.)
+(Explication pédagogique simple.)
 
 ### 📋 Recommandations
 1. **Délai de consultation** : [e.g., Immédiat, < 4h, Demain, etc.]
-2. **Conseils d'auto-soins** : (Simple actions)
-3. **Signes d'alerte** : (When to call emergency if situation evolves)
+2. **Actions immédiates** : (What to do NOW if emergency)
+3. **Conseils d'auto-soins** : (Simple actions)
+4. **Signes d'alerte** : (When to call emergency if situation evolves)
+
+---
+[INSTRUCTIONS_VOCALES]
+(Provide 2-3 very short, imperative instructions in French for immediate action, e.g., "Allongez le patient", "Ne donnez rien à boire", "Ouvrez la porte aux secours". This part will be spoken by the app in case of URGENCE VITALE.)
+---
 
 Keep it professional, empathetic, and concise. No definitive diagnosis."""
+
+def speak_text(text):
+    """Génère un script JS pour faire parler le navigateur (Web Speech API)."""
+    if not text: return
+    js_code = f"""
+        <script>
+        var msg = new SpeechSynthesisUtterance("{text}");
+        msg.lang = 'fr-FR';
+        msg.rate = 0.9;
+        window.speechSynthesis.speak(msg);
+        </script>
+    """
+    st.components.v1.html(js_code, height=0)
 
 def get_api_key():
     """Récupère la clé API depuis les secrets ou l'environnement."""
@@ -491,10 +510,22 @@ elif st.session_state.step == 2:
 elif st.session_state.step == 3:
     st.success("✅ Analyse de triage terminée")
     
-    # Indicateur d'urgence visuel (Simple regex/search)
+    # Extraction des instructions vocales
     report = st.session_state.final_report
+    vocal_instructions = ""
+    clean_report = report
+    
+    if "[INSTRUCTIONS_VOCALES]" in report:
+        parts = report.split("[INSTRUCTIONS_VOCALES]")
+        clean_report = parts[0]
+        vocal_instructions = parts[1].replace("---", "").strip()
+
+    # Indicateur d'urgence visuel et audio
     if "URGENCE VITALE" in report.upper() or "15" in report or "112" in report:
         st.error("🆘 **ALERTE : URGENCE VITALE DÉTECTÉE. APPELEZ LE 15 OU LE 112 IMMÉDIATEMENT.**")
+        if vocal_instructions:
+            speak_text(vocal_instructions)
+            st.warning(f"📢 **Consignes d'urgence lues à voix haute :** {vocal_instructions}")
     
     with st.expander("📝 Récapitulatif du profil patient", expanded=False):
         st.write(f"**Âge :** {st.session_state.initial_data['age']} ans | **Sexe :** {st.session_state.initial_data['sexe']}")
