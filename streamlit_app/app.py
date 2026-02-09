@@ -521,11 +521,17 @@ elif st.session_state.step == 3:
         vocal_instructions = parts[1].replace("---", "").strip()
 
     # Indicateur d'urgence visuel et audio
-    if "URGENCE VITALE" in report.upper() or "15" in report or "112" in report:
-        st.error("🆘 **ALERTE : URGENCE VITALE DÉTECTÉE. APPELEZ LE 15 OU LE 112 IMMÉDIATEMENT.**")
+    is_emergency = any(word in report.upper() for word in ["URGENCE VITALE", "HAUT", "15", "112"])
+    
+    if is_emergency:
+        if "URGENCE VITALE" in report.upper():
+            st.error("🆘 **ALERTE : URGENCE VITALE DÉTECTÉE. APPELEZ LE 15 OU LE 112 IMMÉDIATEMENT.**")
+        else:
+            st.warning("⚠️ **ALERTE : URGENCE ÉLEVÉE DÉTECTÉE. CONSULTEZ RAPIDEMENT.**")
+            
         if vocal_instructions:
             speak_text(vocal_instructions)
-            st.warning(f"📢 **Consignes d'urgence lues à voix haute :** {vocal_instructions}")
+            st.info(f"📢 **Consignes de sécurité lues à voix haute :** {vocal_instructions}")
     
     with st.expander("📝 Récapitulatif du profil patient", expanded=False):
         st.write(f"**Âge :** {st.session_state.initial_data['age']} ans | **Sexe :** {st.session_state.initial_data['sexe']}")
