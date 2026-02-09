@@ -158,10 +158,10 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None,
     
     # --- OPTION 1: KAGGLE / CUSTOM URL ---
     if backend == "Kaggle / Local URL":
-        if not custom_url:
-            return "Erreur : URL du serveur manquante."
+        if not custom_url or not str(custom_url).startswith("http"):
+            return "Erreur : URL du serveur Kaggle invalide ou manquante. Elle doit commencer par http:// ou https://"
         
-        endpoint = f"{custom_url.rstrip('/')}/generate"
+        endpoint = f"{str(custom_url).rstrip('/')}/generate"
         payload = {
             "prompt": prompt,
             "system_instruction": system_instruction
