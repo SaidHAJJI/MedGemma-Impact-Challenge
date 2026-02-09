@@ -2,21 +2,23 @@ package com.example.medgemma
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,7 +27,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,25 +42,40 @@ enum class TriageStep {
     INITIAL, FOLLOW_UP, FINAL
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
+    private var tts: TextToSpeech? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        tts = TextToSpeech(this, this)
         setContent {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    MedGemmaScreen()
+                    MedGemmaScreen(tts)
                 }
             }
         }
+    }
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.language = Locale.FRENCH
+        }
+    }
+
+    override fun onDestroy() {
+        tts?.stop()
+        tts?.shutdown()
+        super.onDestroy()
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MedGemmaScreen() {
+fun MedGemmaScreen(tts: TextToSpeech?) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
@@ -68,6 +87,7 @@ fun MedGemmaScreen() {
     var followupQuestions by remember { mutableStateOf("") }
     var followupAnswers by remember { mutableStateOf("") }
     var finalReport by remember { mutableStateOf("") }
+    var isEmergency by remember { mutableStateOf(false) }
     
     // États Techniques
     var isLoading by remember { mutableStateOf(false) }
@@ -75,20 +95,20 @@ fun MedGemmaScreen() {
     var modelError by remember { mutableStateOf<String?>(null) }
     var llmInference by remember { mutableStateOf<LlmInference?>(null) }
 
-    // --- System Prompts (V3 SafetyFirst) ---
+    // --- System Prompts (V4 Optimized) ---
     val promptQuestions = """Tu es MedGemma, expert en triage médical.
 Génère 3-4 questions essentielles en français pour évaluer l'urgence des symptômes fournis.
-Concentre-toi sur la distinction entre bénin et urgence vitale.
+Si tu suspectes une urgence vitale, pose des questions sur la conscience, la respiration et la douleur thoracique.
 Format: liste à puces simple."""
 
     val promptFinal = """Tu es MedGemma, assistant de triage médical.
-IMPORTANT: Si les symptômes suggèrent une urgence vitale (signes d'AVC, crise cardiaque, hémorragie grave, détresse respiratoire), dis IMMEDIATEMENT d'appeler le 15 ou le 112 sur la première ligne.
-Pour les non-urgences, fournis:
+RÈGLE CRUCIALE: Si les symptômes suggèrent une urgence vitale (AVC, Infarctus, Hémorragie, Détresse respiratoire, Inconscience), commence ton rapport par EXACTEMENT le mot-clé [URGENCE_VITALE] suivi d'instructions de premiers secours immédiates.
+Sinon, fournis:
 1. Niveau d'urgence (Faible, Moyen, Haut).
 2. Causes possibles (avec prudence).
 3. Actions de soins immédiats.
 4. Conseil sur quand consulter.
-Réponds en français de façon concise et empathique."""
+Réponds en français de façon concise."""
 
     // --- Chargement du modèle ---
     LaunchedEffect(Unit) {
@@ -144,8 +164,8 @@ Réponds en français de façon concise et empathique."""
             TopAppBar(
                 title = { Text("MedGemma Triage (Local)") },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.primary
+                    containerColor = if (isEmergency) Color(0xFFB71C1C) else MaterialTheme.colorScheme.primaryContainer,
+                    titleContentColor = if (isEmergency) Color.White else MaterialTheme.colorScheme.primary
                 )
             )
         }
@@ -208,8 +228,12 @@ Réponds en français de façon concise et empathique."""
                                     val response = llmInference?.generateResponse(prompt) ?: "Erreur interne"
                                     withContext(Dispatchers.Main) {
                                         finalReport = response
+                                        isEmergency = response.contains("[URGENCE_VITALE]", ignoreCase = true)
                                         currentStep = TriageStep.FINAL
                                         isLoading = false
+                                        if (isEmergency) {
+                                            tts?.speak("Urgence vitale détectée. Veuillez suivre les instructions et appeler les secours.", TextToSpeech.QUEUE_FLUSH, null, null)
+                                        }
                                     }
                                 }
                             }
@@ -218,10 +242,18 @@ Réponds en français de façon concise et empathique."""
                     TriageStep.FINAL -> {
                         FinalReportStep(
                             report = finalReport,
+                            isEmergency = isEmergency,
+                            onSpeak = { tts?.speak(finalReport.replace("[URGENCE_VITALE]", ""), TextToSpeech.QUEUE_FLUSH, null, null) },
+                            onCallEmergency = {
+                                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:15"))
+                                context.startActivity(intent)
+                            },
                             onReset = {
                                 currentStep = TriageStep.INITIAL
                                 symptomsDescription = ""
                                 followupAnswers = ""
+                                isEmergency = false
+                                tts?.stop()
                             }
                         )
                     }
@@ -323,10 +355,82 @@ fun FollowUpStep(
 }
 
 @Composable
-fun FinalReportStep(report: String, onReset: () -> Unit) {
+fun FinalReportStep(
+    report: String, 
+    isEmergency: Boolean,
+    onSpeak: () -> Unit,
+    onCallEmergency: () -> Unit,
+    onReset: () -> Unit
+) {
+    if (isEmergency) {
+        EmergencyUI(report, onSpeak, onCallEmergency, onReset)
+    } else {
+        StandardUI(report, onSpeak, onReset)
+    }
+}
+
+@Composable
+fun EmergencyUI(report: String, onSpeak: () -> Unit, onCallEmergency: () -> Unit, onReset: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(Icons.Default.Warning, contentDescription = null, tint = Color.Red, modifier = Modifier.size(64.dp))
+        Text(
+            "URGENCE VITALE DÉTECTÉE", 
+            style = MaterialTheme.typography.headlineMedium, 
+            color = Color.Red,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Button(
+            onClick = onCallEmergency,
+            colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+            modifier = Modifier.fillMaxWidth().height(80.dp),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(32.dp))
+            Spacer(modifier = Modifier.width(16.dp))
+            Text("APPELER LE 15 / 112", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Instructions de Secours", style = MaterialTheme.typography.titleLarge, color = Color(0xFFB71C1C))
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(onClick = onSpeak) { Icon(Icons.Default.VolumeUp, contentDescription = "Lire", tint = Color(0xFFB71C1C)) }
+                }
+                Divider(color = Color(0xFFB71C1C), thickness = 1.dp)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = report.replace("[URGENCE_VITALE]", "").trim(), style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        OutlinedButton(onClick = onReset, modifier = Modifier.fillMaxWidth()) {
+            Text("Nouvelle analyse")
+        }
+    }
+}
+
+@Composable
+fun StandardUI(report: String, onSpeak: () -> Unit, onReset: () -> Unit) {
     Text("✅ Rapport de Triage", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
     Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Text(text = report, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodyLarge)
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Analyse MedGemma", style = MaterialTheme.typography.titleMedium)
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = onSpeak) { Icon(Icons.Default.VolumeUp, contentDescription = "Lire") }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = report, style = MaterialTheme.typography.bodyLarge)
+        }
     }
     Spacer(modifier = Modifier.height(16.dp))
     Button(onClick = onReset, modifier = Modifier.fillMaxWidth()) {
