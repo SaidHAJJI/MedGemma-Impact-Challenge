@@ -113,6 +113,9 @@ Structure your response in French as follows:
 ### 🩺 Analyse de la situation
 (Provide a brief, cautious analysis based on the profile and symptoms. Use emojis.)
 
+### 🧠 Raisonnement Clinique (Le "Pourquoi ?")
+(Explication pédagogique simple sur pourquoi ce niveau d'urgence a été choisi, quels sont les facteurs de risque identifiés et les signes positifs/négatifs importants. C'est ici que vous rassurez ou alertez avec pédagogie.)
+
 ### 📋 Recommandations
 1. **Délai de consultation** : [e.g., Immédiat, < 4h, Demain, etc.]
 2. **Conseils d'auto-soins** : (Simple actions)
@@ -126,7 +129,7 @@ def get_api_key():
         return st.secrets["GEMINI_API_KEY"]
     return os.getenv("GEMINI_API_KEY")
 
-def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None):
+def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None, image_bytes=None):
     """Envoie la requête au LLM choisi (Gemini API ou Kaggle/Custom)."""
     
     # --- OPTION 1: KAGGLE / CUSTOM URL ---
@@ -159,11 +162,16 @@ def query_llm(prompt, system_instruction, backend="Gemini API", custom_url=None)
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.2, # Température plus basse pour le JSON
-                max_output_tokens=1000,
+                max_output_tokens=2000,
             )
+            
+            contents = [prompt]
+            if image_bytes:
+                contents.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
+
             response = client.models.generate_content(
                 model=MODEL_NAME,
-                contents=prompt,
+                contents=contents,
                 config=config
             )
             text = response.text.strip()
@@ -278,6 +286,8 @@ if 'symptoms_input' not in st.session_state:
     st.session_state.symptoms_input = ""
 if 'medical_history' not in st.session_state:
     st.session_state.medical_history = []
+if 'patient_photo' not in st.session_state:
+    st.session_state.patient_photo = None
 
 st.title("🏥 MedGemma Triage")
 st.markdown("---")
@@ -310,32 +320,44 @@ if st.session_state.step == 1:
 
     meds_allergies = st.text_input("Traitements actuels ou allergies connues :", placeholder="Ex: Doliprane, allergie à la pénicilline...")
 
-    st.subheader("3. Symptômes")
+    st.subheader("3. Symptômes & Analyse Visuelle")
     
-    # Predefined Symptoms Selection
-    PREDEFINED_SYMPTOMS = [
-        "Fièvre", "Maux de tête", "Toux", "Maux de gorge", "Essoufflement",
-        "Fatigue", "Douleurs musculaires", "Nausées", "Vomissements", "Diarrhée",
-        "Douleur thoracique", "Vertiges"
-    ]
+    # Predefined Symptoms with Emojis & Categories
+    SYMPTOMS_CAT = {
+        "Général": ["🌡️ Fièvre", "😴 Fatigue", "💪 Douleurs musculaires"],
+        "ORL/Respi": ["🧠 Maux de tête", "💨 Essoufflement", "🗣️ Toux", "👄 Maux de gorge"],
+        "Digestif": ["🤢 Nausées", "🤮 Vomissements", "🚽 Diarrhée"],
+        "Urgence": ["🫀 Douleur thoracique", "😵 Vertiges"]
+    }
 
     st.write("Sélectionnez les symptômes présents :")
-    cols = st.columns(4)
-    for i, symptom in enumerate(PREDEFINED_SYMPTOMS):
-        col = cols[i % 4]
-        is_selected = symptom in st.session_state.selected_symptoms
-        if col.button(f"{'' if is_selected else ''}{symptom}", key=f"btn_{symptom}", use_container_width=True, type="primary" if is_selected else "secondary"):
-            if is_selected: st.session_state.selected_symptoms.remove(symptom)
-            else: st.session_state.selected_symptoms.add(symptom)
-            st.rerun()
+    for cat, symptoms in SYMPTOMS_CAT.items():
+        st.markdown(f"**{cat}**")
+        cols = st.columns(len(symptoms))
+        for i, symp in enumerate(symptoms):
+            is_selected = symp in st.session_state.selected_symptoms
+            if cols[i].button(symp, key=f"btn_{symp}", use_container_width=True, type="primary" if is_selected else "secondary"):
+                if is_selected: st.session_state.selected_symptoms.remove(symp)
+                else: st.session_state.selected_symptoms.add(symp)
+                st.rerun()
+
+    st.divider()
+    
+    # Photo Upload (Innovation 1)
+    st.write("📸 **Photo-Triage (Optionnel)**")
+    uploaded_file = st.file_uploader("Ajoutez une photo si pertinent (éruption, gorge, blessure...)", type=['jpg', 'jpeg', 'png'])
+    if uploaded_file:
+        st.session_state.patient_photo = uploaded_file.read()
+        st.image(st.session_state.patient_photo, caption="Photo chargée pour analyse", width=200)
 
     # Voice/Text Input
-    audio = mic_recorder(start_prompt="🎤 Parler", stop_prompt="⏹️ Arrêter", key='recorder')
+    st.write("🎤 **Description Vocale ou Texte**")
+    audio = mic_recorder(start_prompt="Démarrer l'enregistrement", stop_prompt="Arrêter", key='recorder')
     if audio:
         transcribed = transcribe_audio(audio['bytes'], backend=backend_option, custom_url=custom_url)
         if transcribed: st.session_state.symptoms_input = transcribed
 
-    symptoms_text = st.text_area("Description libre :", value=st.session_state.symptoms_input, height=100)
+    symptoms_text = st.text_area("Précisez les circonstances :", value=st.session_state.symptoms_input, height=100)
 
     if st.button("Suivant ➡️", type="primary"):
         if not symptoms_text.strip() and not st.session_state.selected_symptoms:
@@ -361,14 +383,21 @@ if st.session_state.step == 1:
             }
             
             with st.status("🩺 Analyse initiale des symptômes...", expanded=True) as status:
-                st.write("Vérification des constantes...")
+                st.write("Analyse des données et de l'image...")
                 prompt = f"""Patient: {age} ans, {sexe}. 
                 Terrain: {', '.join(history) if history else 'Aucun antécédent majeur'}.
                 Traitements/Allergies: {meds_allergies}.
                 Symptômes: {st.session_state.selected_symptoms}. 
-                Description: {symptoms_text}"""
+                Description: {symptoms_text}
+                Une photo est jointe à cette analyse pour identifier d'éventuels signes visuels cliniques."""
                 
-                st.session_state.followup_questions = query_llm(prompt, SYSTEM_PROMPT_QUESTIONS, backend=backend_option, custom_url=custom_url)
+                st.session_state.followup_questions = query_llm(
+                    prompt, 
+                    SYSTEM_PROMPT_QUESTIONS, 
+                    backend=backend_option, 
+                    custom_url=custom_url,
+                    image_bytes=st.session_state.patient_photo
+                )
                 status.update(label="✅ Analyse terminée !", state="complete", expanded=False)
                 st.session_state.step = 2
             st.rerun()
@@ -439,8 +468,16 @@ elif st.session_state.step == 2:
                 
                 RÉPONSES AUX QUESTIONS DE PRÉCISION:
                 {formatted_answers}
+
+                Note: Une photo a été fournie par le patient. Analysez-la en conjonction avec ces réponses pour le triage final.
                 """
-                st.session_state.final_report = query_llm(final_prompt, SYSTEM_PROMPT_FINAL, backend=backend_option, custom_url=custom_url)
+                st.session_state.final_report = query_llm(
+                    final_prompt, 
+                    SYSTEM_PROMPT_FINAL, 
+                    backend=backend_option, 
+                    custom_url=custom_url,
+                    image_bytes=st.session_state.patient_photo
+                )
                 status.update(label="✅ Rapport prêt !", state="complete", expanded=False)
                 st.session_state.step = 3
             st.rerun()
@@ -482,6 +519,7 @@ elif st.session_state.step == 3:
             st.session_state.step = 1
             st.session_state.selected_symptoms = set()
             st.session_state.symptoms_input = ""
+            st.session_state.patient_photo = None
             st.rerun()
 
 

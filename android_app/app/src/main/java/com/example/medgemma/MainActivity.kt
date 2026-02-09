@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.widget.Toast
@@ -11,9 +12,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -23,13 +28,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.rememberAsyncImagePainter
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -84,6 +92,7 @@ fun MedGemmaScreen(tts: TextToSpeech?) {
     var ageText by remember { mutableStateOf("30") }
     var selectedSex by remember { mutableStateOf("Masculin") }
     var symptomsDescription by remember { mutableStateOf("") }
+    var capturedImageUri by remember { mutableStateOf<Uri?>(null) }
     var followupQuestions by remember { mutableStateOf("") }
     var followupAnswers by remember { mutableStateOf("") }
     var finalReport by remember { mutableStateOf("") }
@@ -98,7 +107,7 @@ fun MedGemmaScreen(tts: TextToSpeech?) {
     // --- System Prompts (V4 Optimized) ---
     val promptQuestions = """Tu es MedGemma, expert en triage médical.
 Génère 3-4 questions essentielles en français pour évaluer l'urgence des symptômes fournis.
-Si tu suspectes une urgence vitale, pose des questions sur la conscience, la respiration et la douleur thoracique.
+Si une photo est mentionnée ou jointe, pose des questions sur l'aspect visuel (couleur, taille, évolution).
 Format: liste à puces simple."""
 
     val promptFinal = """Tu es MedGemma, assistant de triage médical.
@@ -130,6 +139,13 @@ Réponds en français de façon concise."""
                 modelError = "Erreur chargement modèle : ${e.message}"
             }
         }
+    }
+
+    // Photo Launcher
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        capturedImageUri = uri
     }
 
     // Voice Recognition Launcher
@@ -191,13 +207,16 @@ Réponds en français de façon concise."""
                             onSexChange = { selectedSex = it },
                             description = symptomsDescription,
                             onDescriptionChange = { symptomsDescription = it },
+                            imageUri = capturedImageUri,
+                            onPickImage = { imagePickerLauncher.launch("image/*") },
                             onVoiceInput = { permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) },
                             isLoading = isLoading,
                             onNext = {
                                 if (symptomsDescription.isNotBlank()) {
                                     isLoading = true
                                     scope.launch(Dispatchers.IO) {
-                                        val prompt = "$promptQuestions\nPatient: $ageText ans, $selectedSex. Symptômes: $symptomsDescription"
+                                        val photoContext = if (capturedImageUri != null) " (Photo jointe)" else ""
+                                        val prompt = "$promptQuestions\nPatient: $ageText ans, $selectedSex. Symptômes: $symptomsDescription$photoContext"
                                         val response = llmInference?.generateResponse(prompt) ?: "Erreur interne"
                                         withContext(Dispatchers.Main) {
                                             followupQuestions = response
@@ -224,7 +243,8 @@ Réponds en français de façon concise."""
                                         CONTEXTE:
                                         - Patient: $ageText ans, $selectedSex
                                         - Symptômes initiaux: $symptomsDescription
-                                        - Précisions: $followupAnswers"""
+                                        - Précisions: $followupAnswers
+                                        ${if (capturedImageUri != null) "- NOTE: Une photo a été examinée par l'utilisateur." else ""}"""
                                     val response = llmInference?.generateResponse(prompt) ?: "Erreur interne"
                                     withContext(Dispatchers.Main) {
                                         finalReport = response
@@ -252,6 +272,7 @@ Réponds en français de façon concise."""
                                 currentStep = TriageStep.INITIAL
                                 symptomsDescription = ""
                                 followupAnswers = ""
+                                capturedImageUri = null
                                 isEmergency = false
                                 tts?.stop()
                             }
@@ -284,6 +305,8 @@ fun InitialInputStep(
     age: String, onAgeChange: (String) -> Unit,
     sex: String, onSexChange: (String) -> Unit,
     description: String, onDescriptionChange: (String) -> Unit,
+    imageUri: Uri?,
+    onPickImage: () -> Unit,
     onVoiceInput: () -> Unit,
     isLoading: Boolean,
     onNext: () -> Unit
@@ -308,8 +331,39 @@ fun InitialInputStep(
             }
         }
     }
+    
     Spacer(modifier = Modifier.height(16.dp))
-    Text("2. Symptômes", style = MaterialTheme.typography.titleLarge)
+    Text("2. Photo (optionnel)", style = MaterialTheme.typography.titleLarge)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .clickable { onPickImage() },
+        contentAlignment = Alignment.Center
+    ) {
+        if (imageUri == null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.AddAPhoto, contentDescription = null, modifier = Modifier.size(32.dp))
+                Text("Ajouter une photo (plaie, etc.)", style = MaterialTheme.typography.bodySmall)
+            }
+        } else {
+            Image(
+                painter = rememberAsyncImagePainter(imageUri),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+            Box(modifier = Modifier.fillMaxSize().padding(8.dp), contentAlignment = Alignment.TopEnd) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.Green)
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+    Text("3. Symptômes", style = MaterialTheme.typography.titleLarge)
     OutlinedTextField(
         value = description, onValueChange = onDescriptionChange,
         label = { Text("Décrivez vos symptômes...") },

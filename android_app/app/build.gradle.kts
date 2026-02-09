@@ -62,6 +62,9 @@ dependencies {
     
     // MediaPipe GenAI
     implementation("com.google.mediapipe:tasks-genai:0.10.14")
+    
+    // Coil (Image Loading)
+    implementation("io.coil-kt:coil-compose:2.6.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
