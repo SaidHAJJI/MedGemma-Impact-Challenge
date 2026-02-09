@@ -42,6 +42,12 @@ def create_pdf(report_text, patient_data):
     pdf = MedGemmaPDF()
     pdf.add_page()
     
+    def clean_txt(t):
+        """Nettoie le texte pour qu'il soit compatible avec latin-1 (FPDF)."""
+        if not t: return ""
+        if isinstance(t, list): t = ", ".join(t)
+        return str(t).encode('latin-1', 'replace').decode('latin-1')
+
     # Méta-données
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 5, f"Date: {datetime.now().strftime('%d/%m/%Y %H:%M')}", 0, 1)
@@ -51,23 +57,23 @@ def create_pdf(report_text, patient_data):
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 8, "Informations Patient", 0, 1)
     pdf.set_font("Arial", size=11)
-    pdf.cell(0, 6, f"Age: {patient_data.get('age')} ans", 0, 1)
-    pdf.cell(0, 6, f"Sexe: {patient_data.get('sexe')}", 0, 1)
+    pdf.cell(0, 6, clean_txt(f"Age: {patient_data.get('age')} ans"), 0, 1)
+    pdf.cell(0, 6, clean_txt(f"Sexe: {patient_data.get('sexe')}"), 0, 1)
     
     # Terrain & Antécédents
     history = patient_data.get('history', [])
     if history:
-        pdf.multi_cell(0, 6, f"Antecedents: {', '.join(history)}")
+        pdf.multi_cell(0, 6, clean_txt(f"Antecedents: {', '.join(history)}"))
     
     meds = patient_data.get('meds', '')
     if meds:
-        pdf.multi_cell(0, 6, f"Traitements/Allergies: {meds}")
+        pdf.multi_cell(0, 6, clean_txt(f"Traitements/Allergies: {meds}"))
     
     # Symptomes
-    symptoms_list = ", ".join(patient_data.get('symptoms', []))
-    pdf.multi_cell(0, 6, f"Symptomes: {symptoms_list}")
+    symptoms_list = patient_data.get('symptoms', [])
+    pdf.multi_cell(0, 6, clean_txt(f"Symptomes: {', '.join(symptoms_list)}"))
     if patient_data.get('description'):
-         pdf.multi_cell(0, 6, f"Description: {patient_data.get('description')}")
+         pdf.multi_cell(0, 6, clean_txt(f"Description: {patient_data.get('description')}"))
     pdf.ln(5)
     
     # Rapport LLM
@@ -75,15 +81,14 @@ def create_pdf(report_text, patient_data):
     pdf.cell(0, 8, "Analyse & Recommandations", 0, 1)
     pdf.set_font("Arial", size=11)
     
-    # Nettoyage basique des caractères non supportés par latin-1
-    safe_text = report_text.encode('latin-1', 'replace').decode('latin-1')
-    pdf.multi_cell(0, 6, safe_text)
+    # Nettoyage du rapport complet
+    pdf.multi_cell(0, 6, clean_txt(report_text))
     
     # Disclaimer
     pdf.ln(10)
     pdf.set_font("Arial", 'I', 9)
     pdf.set_text_color(200, 0, 0)
-    pdf.multi_cell(0, 5, "AVERTISSEMENT: Ce rapport est généré par une IA (Gemma 2b / Gemini). Il ne remplace pas un avis médical professionnel. En cas d'urgence, appelez le 15 ou le 112.")
+    pdf.multi_cell(0, 5, clean_txt("AVERTISSEMENT: Ce rapport est généré par une IA. Il ne remplace pas un avis médical professionnel. En cas d'urgence, appelez le 15 ou le 112."))
     
     return pdf.output(dest='S').encode('latin-1')
 
