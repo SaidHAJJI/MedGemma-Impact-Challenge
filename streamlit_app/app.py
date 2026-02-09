@@ -129,7 +129,7 @@ Structure your response in French as follows:
 
 ---
 [INSTRUCTIONS_VOCALES]
-(Provide 2-3 very short, imperative instructions in French for immediate action, e.g., "Allongez le patient", "Ne donnez rien à boire", "Ouvrez la porte aux secours". This part will be spoken by the app in case of URGENCE VITALE.)
+(Provide 2-3 very short, imperative instructions in French for immediate action. MANDATORY if Urgency is HAUT or URGENCE VITALE. Keep it very brief.)
 ---
 
 Keep it professional, empathetic, and concise. No definitive diagnosis."""
@@ -137,9 +137,12 @@ Keep it professional, empathetic, and concise. No definitive diagnosis."""
 def speak_text(text):
     """Génère un script JS pour faire parler le navigateur (Web Speech API)."""
     if not text: return
+    # Nettoyage des guillemets pour éviter de casser le JS
+    safe_text = text.replace('"', "'").replace("\n", " ")
     js_code = f"""
         <script>
-        var msg = new SpeechSynthesisUtterance("{text}");
+        window.speechSynthesis.cancel(); // Arrêter toute parole en cours
+        var msg = new SpeechSynthesisUtterance("{safe_text}");
         msg.lang = 'fr-FR';
         msg.rate = 0.9;
         window.speechSynthesis.speak(msg);
@@ -532,6 +535,8 @@ elif st.session_state.step == 3:
         if vocal_instructions:
             speak_text(vocal_instructions)
             st.info(f"📢 **Consignes de sécurité lues à voix haute :** {vocal_instructions}")
+        else:
+            st.info("ℹ️ *Analyse terminée. Aucune instruction vocale spécifique générée pour ce cas.*")
     
     with st.expander("📝 Récapitulatif du profil patient", expanded=False):
         st.write(f"**Âge :** {st.session_state.initial_data['age']} ans | **Sexe :** {st.session_state.initial_data['sexe']}")
